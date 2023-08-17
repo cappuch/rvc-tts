@@ -1,5 +1,5 @@
 # rvc-tts
-Text to speech for RVC (Retrieval-based-Voice-Conversion) using SpeechT5/Bark
+Text to speech implementation for RVC (Retrieval-based-Voice-Conversion) using SpeechT5/Bark
 
 ## discord.gg/aihub pls (RVC models and AI stuff)
 
