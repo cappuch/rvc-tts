@@ -1,0 +1,84 @@
+import librosa
+import numpy as np
+import torch
+import soundfile as sf
+import os
+import wave
+from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
+from num2words import num2words
+from scipy.io import wavfile
+import noisereduce as nr
+from pydub import AudioSegment
+import requests
+from transformers import AutoProcessor, AutoModel
+import scipy
+
+num_channels = 2
+sample_width = 2
+frame_rate = 44100
+num_frames = 0 
+compression_type = 'NONE'
+compression_name = 'not compressed'
+
+tts_checkpoint = "microsoft/speecht5_tts"
+tts_processor = SpeechT5Processor.from_pretrained(tts_checkpoint)
+tts_model = SpeechT5ForTextToSpeech.from_pretrained(tts_checkpoint)
+tts_vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan")
+bark_processor = AutoProcessor.from_pretrained("suno/bark-small")
+bark_model = AutoModel.from_pretrained("suno/bark-small")
+
+speaker_embeddings = {
+    "male": "models/tts/male.npy",
+    "female": "models/tts/female.npy"
+}
+
+RVCPATHCLI = "RVC/infer_cli.py"
+
+def speecht5(text='', speaker='male', file='test.wav'):
+    if len(text.strip()) == 0:
+        return (16000, np.zeros(0).astype(np.int16))
+    inputs = tts_processor(text=text, return_tensors="pt")
+    input_ids = inputs["input_ids"]
+    input_ids = input_ids[..., :tts_model.config.max_text_positions]
+    speaker_embedding = np.load(speaker_embeddings[speaker])
+    speaker_embedding = torch.tensor(speaker_embedding).unsqueeze(0)
+    speech = tts_model.generate_speech(input_ids, speaker_embedding, vocoder=tts_vocoder)
+    speech = (speech.numpy() * 32767).astype(np.int16)
+    sf.write(file, speech, 16000, 'PCM_16')
+
+
+def bark(text,file='test.wav'):
+    inputs = bark_processor(
+    text=[text],
+    return_tensors="pt",
+    )
+    speech_values = bark_model.generate(**inputs, do_sample=True)
+    sampling_rate = bark_model.generation_config.sample_rate
+    scipy.io.wavfile.write(file, rate=sampling_rate, data=speech_values.cpu().numpy().squeeze())
+
+	
+def infer(transpose='1', input_path='test.wav', output_path='out.wav', model_path='/models/rvc/NAR.pth', index_path='/models/rvc/NAR.index', inference_device='cpu', method='harvest'):
+    cmd = f'python {RVCPATHCLI} {transpose} {input_path} {output_path} {model_path} {index_path} {inference_device} {method}'
+    os.system(cmd)
+    return output_path
+
+def generate(text='',gender='male', transpose='1', model='NAR', code='a'):
+    with wave.open(f'static/{code}1.wav', 'wb') as f:
+        f.setparams((num_channels, sample_width, frame_rate, num_frames, compression_type, compression_name))
+    #CHANGE MY INFERENCE LOL(text, gender,file=f'static/{code}1.wav')
+    rate, data = wavfile.read(f'static/{code}1.wav')
+    reduced_noise = nr.reduce_noise(y=data, sr=rate)
+    wavfile.write(f'static/{code}1.wav', rate, reduced_noise)
+    audio = AudioSegment.from_file(f'static/{code}1.wav')
+    silence = AudioSegment.silent(duration=1500)
+    output_audio = silence + audio
+    output_audio.export(f'static/{code}1.wav', format='wav')
+    return infer(input_path=f'static/{code}1.wav', output_path=f'generated_audio.wav',model_path=f'models/rvc/{model}.pth', index_path=f'models/RVC/{model}.index', transpose=transpose)
+
+def parse(text):
+    words = text.split()
+    words = [num2words(word) if word.isdigit() else word for word in words]
+    return ' '.join(words)
+
+def get_models():
+    return [os.path.splitext(f)[0] for f in os.listdir('e:/VC/models/rvc') if f.endswith('.pth')]
